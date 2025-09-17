@@ -44,12 +44,37 @@ layered_runtime:
       re2.max_program_size.warn_level: 1000
 dynamic_resources:
   ads_config:
-    api_type: DELTA_GRPC
+    api_type: GRPC
     transport_api_version: V3
     grpc_services:
+    {{- if .GatewayNamespaceMode }}
+    - google_grpc:
+        stat_prefix: xds_cluster
+        target_uri: {{ .XdsServer.Address }}:{{ .XdsServer.Port }}
+        channel_credentials:
+          ssl_credentials:
+            root_certs:
+              filename: "/certs/ca.crt"
+        channel_args:
+          args:
+            "grpc.ssl_target_name_override":
+              string_value: "envoy-gateway"
+            "grpc.default_authority":
+              string_value: "envoy-gateway"
+        call_credentials:
+        - from_plugin:
+            name: envoy.grpc_credentials.file_based_metadata
+            typed_config:
+              "@type": type.googleapis.com/envoy.config.grpc_credential.v3.FileBasedMetadataConfig
+              secret_data:
+                filename: /var/run/secrets/token/sa-token
+              header_key: Authorization
+              header_prefix: "Bearer "
+    {{- else }}
     - envoy_grpc:
         cluster_name: xds_cluster
-    set_node_on_first_message_only: true
+    {{- end }}
+    set_node_on_first_message_only: false
   lds_config:
     ads: {}
     resource_api_version: V3
@@ -212,22 +237,6 @@ static_resources:
             connection_keepalive:
               interval: 30s
               timeout: 5s
-  {{- if .GatewayNamespaceMode }}
-        http_filters:
-        - name: envoy.filters.http.credential_injector
-          typed_config:
-            "@type": type.googleapis.com/envoy.extensions.filters.http.credential_injector.v3.CredentialInjector
-            credential:
-              name: envoy.http.injected_credentials.generic
-              typed_config:
-                "@type": type.googleapis.com/envoy.extensions.http.injected_credentials.generic.v3.Generic
-                credential:
-                  name: jwt-sa-bearer
-            overwrite: true
-        - name: envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec
-          typed_config:
-            "@type": type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec
-  {{- end }}
     name: xds_cluster
     type: STRICT_DNS
     transport_socket:
@@ -251,13 +260,6 @@ static_resources:
               path_config_source:
                 path: {{ .SdsTrustedCAPath }}
               resource_api_version: V3
-  {{- if .GatewayNamespaceMode }}
-  secrets:
-  - name: jwt-sa-bearer
-    generic_secret:
-      secret:
-        filename: "/var/run/secrets/token/sa-token"
-  {{- end }}
 overload_manager:
   refresh_interval: 0.25s
   resource_monitors:
